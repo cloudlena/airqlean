@@ -1,0 +1,161 @@
+esphome:
+  name: airqlean
+  friendly_name: AirQlean
+
+esp8266:
+  board: d1_mini
+
+# Optional Wi-Fi
+# wifi:
+#   ssid: !secret wifi_ssid
+#   password: !secret wifi_password
+
+logger:
+
+i2c:
+
+output:
+  - platform: esp8266_pwm
+    id: red_output
+    pin: D7
+  - platform: esp8266_pwm
+    id: yellow_output
+    pin: D6
+  - platform: esp8266_pwm
+    id: green_output
+    pin: D5
+
+light:
+  - platform: binary
+    name: Red LED
+    id: red_led
+    restore_mode: RESTORE_DEFAULT_OFF
+    output: red_output
+  - platform: binary
+    name: Yellow LED
+    id: yellow_led
+    restore_mode: RESTORE_DEFAULT_OFF
+    output: yellow_output
+  - platform: binary
+    name: Green LED
+    id: green_led
+    restore_mode: RESTORE_DEFAULT_OFF
+    output: green_output
+
+sensor:
+  - platform: ens160_i2c
+    eco2:
+      name: CO²
+      id: co2
+      on_value_range:
+        - below: 1000
+          then:
+            - light.turn_off: red_led
+            - light.turn_off: yellow_led
+            - light.turn_on: green_led
+        - above: 1000.1
+          below: 1500
+          then:
+            - light.turn_off: red_led
+            - light.turn_on: yellow_led
+            - light.turn_off: green_led
+        - above: 1500.1
+          then:
+            - light.turn_on: red_led
+            - light.turn_off: yellow_led
+            - light.turn_off: green_led
+    tvoc:
+      name: Total Volatile Organic Compounds
+      id: tvoc
+    aqi:
+      id: air_quality_index
+    address: 0x53
+    compensation:
+      temperature: temperature
+      humidity: humidity
+  - platform: bme280_i2c
+    temperature:
+      name: Temperature
+      id: temperature
+      oversampling: 2x
+      filters:
+        - offset: -2.5
+    pressure:
+      name: Pressure
+      id: pressure
+      oversampling: NONE
+    humidity:
+      name: Humidity
+      id: humidity
+      oversampling: 2x
+      filters:
+        - offset: 8.5
+    address: 0x76
+
+text_sensor:
+  - platform: template
+    name: Air Quality Rating
+    id: air_quality_rating
+    lambda: |-
+      switch ( (int) (id(air_quality_index).state) ) {
+        case 1: return {"Great"};
+        case 2: return {"Good"};
+        case 3: return {"Fair"};
+        case 4: return {"Poor"};
+        case 5: return {"Bad"};
+        default: return {"NA"};
+      }
+  - platform: template
+    name: CO² Rating
+    id: co2_rating
+    lambda: |-
+      int input = id(co2).state;
+      if (input <= 600) {
+        return {"Great"};
+      } else if (input <= 800) {
+        return {"Good"};
+      } else if (input <= 1000) {
+        return {"Fair"};
+      } else if (input <= 1500) {
+        return {"Poor"};
+      } else if (input > 99999) {
+        return {"Bad"};
+      } else {
+        return {"NA"};
+      }
+
+# Optional LCD Display
+display:
+  - platform: lcd_pcf8574
+    dimensions: 16x2
+    address: 0x27
+    update_interval: 60s
+    user_characters:
+      - position: 0
+        data:
+          - 0b01110
+          - 0b01010
+          - 0b01110
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+          - 0b00000
+      - position: 1
+        data:
+          - 0b01100
+          - 0b10010
+          - 0b00100
+          - 0b01000
+          - 0b11110
+          - 0b00000
+          - 0b00000
+          - 0b00000
+    lambda: |-
+      it.printf(0, 0, "%s CO\x09 Level", id(co2_rating).state.c_str());
+      if (id(air_quality_index).state >= 4) {
+        it.printf(0, 1, "%s AQ Level", id(air_quality_rating).state.c_str());
+      } else {
+        it.printf(0, 1, "%2.1f\x08\C", id(temperature).state);
+        it.printf(11, 1, "%2.1f%%", id(humidity).state);
+      }
